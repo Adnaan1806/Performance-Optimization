@@ -1,12 +1,21 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import _ from 'lodash';
-import moment from 'moment';
 import { api } from '../api';
 
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr);
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const days = Math.round(diff / 86400000);
+  const hours = Math.round(diff / 3600000);
+  const mins = Math.round(diff / 60000);
+  if (days > 0)  return rtf.format(-days, 'day');
+  if (hours > 0) return rtf.format(-hours, 'hour');
+  return rtf.format(-mins, 'minute');
+}
+
 export default function ProductCard({ product }) {
-  const name = _.truncate(product.name, { length: 36 });
-  const when = product.created_at ? moment(product.created_at).fromNow() : '';
+  const name = product.name.length > 36 ? product.name.slice(0, 33) + '...' : product.name;
+  const when = product.created_at ? timeAgo(product.created_at) : '';
   return (
     <Link to={`/products/${product.id}`} className="card">
       {/* Full-size image served at 200px. */}

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
-import Home from './pages/Home.jsx';
-import ProductList from './pages/ProductList.jsx';
-import ProductDetail from './pages/ProductDetail.jsx';
-import Search from './pages/Search.jsx';
+
+const Home          = lazy(() => import('./pages/Home.jsx'));
+const ProductList   = lazy(() => import('./pages/ProductList.jsx'));
+const ProductDetail = lazy(() => import('./pages/ProductDetail.jsx'));
+const Search        = lazy(() => import('./pages/Search.jsx'));
 
 export default function App() {
   const [q, setQ] = useState('');
@@ -24,12 +25,14 @@ export default function App() {
         </form>
       </nav>
       <div className="container">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/products" element={<ProductList />} />
-          <Route path="/products/:id" element={<ProductDetail />} />
-          <Route path="/search" element={<Search />} />
-        </Routes>
+        <Suspense fallback={<p>Loading…</p>}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/products" element={<ProductList />} />
+            <Route path="/products/:id" element={<ProductDetail />} />
+            <Route path="/search" element={<Search />} />
+          </Routes>
+        </Suspense>
       </div>
     </>
   );

@@ -1,7 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import moment from 'moment';
 import { api } from '../api';
+
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr);
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const days = Math.round(diff / 86400000);
+  const hours = Math.round(diff / 3600000);
+  const mins = Math.round(diff / 60000);
+  if (days > 0)  return rtf.format(-days, 'day');
+  if (hours > 0) return rtf.format(-hours, 'hour');
+  return rtf.format(-mins, 'minute');
+}
 
 export default function ProductDetail() {
   const { id } = useParams();
@@ -37,7 +47,7 @@ export default function ProductDetail() {
           <div key={r.id} className="review">
             <strong>{r.rating}★</strong> — {r.body}
             <span style={{ float: 'right', color: '#888', fontSize: 12 }}>
-              {moment(r.created_at).fromNow()}
+              {timeAgo(r.created_at)}
             </span>
           </div>
         ))}

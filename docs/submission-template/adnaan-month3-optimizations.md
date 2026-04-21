@@ -450,11 +450,109 @@ TTLs match the HTTP `Cache-Control` headers from Fix #9 — both caching layers 
 
 ---
 
-## Optimization 11: [coming next — Remove MUI icons + lodash from frontend bundle]
+## Optimization 11: Remove MUI icons, lodash, and moment from frontend bundle
+
+### Problem
+Three heavyweight libraries were imported but almost entirely unused, bloating the JS bundle the browser had to download and parse before anything rendered.
+
+| Library | Bundle cost | Actual usage |
+|---------|-------------|--------------|
+| `@mui/icons-material` (all icons) | ~4MB raw | **Zero** — `import * as _AllIcons` in `main.jsx`, never referenced |
+| `moment` | ~231KB | `fromNow()` in `ProductCard` + `ProductDetail` |
+| `lodash` | ~70KB | `_.map` (Home), `_.truncate` (ProductCard) |
+
+### Root Cause
+- `main.jsx` imported the entire MUI icon library with a side-effectful `import *` just to keep it in the bundle — intentional bloat with a comment to that effect.
+- `Home.jsx` used `_.map` when `Array.prototype.map` is identical.
+- `ProductCard.jsx` used `_.truncate` (a simple string operation) and `moment` (a 231KB library) just for a relative time string.
+
+### Solution
+
+**`main.jsx`** — delete the import entirely:
+```diff
+- import * as _AllIcons from '@mui/icons-material';
+- _AllIcons;
+```
+
+**`Home.jsx`** — native array method:
+```diff
+- import _ from 'lodash';
+- {_.map(items, (p) => <ProductCard key={p.id} product={p} />)}
++ {items.map((p) => <ProductCard key={p.id} product={p} />)}
+```
+
+**`ProductCard.jsx`** + **`ProductDetail.jsx`** — replace `_.truncate` and `moment` with native equivalents:
+```diff
+- import _ from 'lodash';
+- import moment from 'moment';
+- const name = _.truncate(product.name, { length: 36 });
+- const when = moment(product.created_at).fromNow();
++ const name = product.name.length > 36 ? product.name.slice(0, 33) + '...' : product.name;
++ // timeAgo() uses Intl.RelativeTimeFormat — built into every modern browser, 0KB
+```
+
+### Impact
+
+| | Before | After |
+|---|---|---|
+| JS bundle (raw) | ~4.3MB+ | **169KB** |
+| JS bundle (gzip) | ~1MB+ | **55KB** |
+| Build time | slow | 1.47s |
+
+**~96% reduction in bundle size.**
+
+### Trade-offs
+- `Intl.RelativeTimeFormat` requires a modern browser (supported in all browsers since 2020 — no concern for this app).
+- `moment` and `lodash` are still listed in `package.json` — they can be removed from dependencies entirely but the app works correctly without them being imported.
 
 ---
 
-## Optimization 12: [coming next — React.lazy code splitting]
+## Optimization 12: React.lazy code splitting for page routes
+
+### Problem
+All 4 page components were statically imported in `App.jsx` — bundled into a single JS file. A user landing on the homepage downloaded the code for `ProductDetail`, `ProductList`, and `Search` immediately, even if they never visited those pages.
+
+### Root Cause
+Standard static `import` statements are resolved at build time and placed into one chunk. No dynamic splitting was configured.
+
+### Solution
+
+```diff
+- import Home from './pages/Home.jsx';
+- import ProductList from './pages/ProductList.jsx';
+- import ProductDetail from './pages/ProductDetail.jsx';
+- import Search from './pages/Search.jsx';
++ import React, { useState, lazy, Suspense } from 'react';
++
++ const Home          = lazy(() => import('./pages/Home.jsx'));
++ const ProductList   = lazy(() => import('./pages/ProductList.jsx'));
++ const ProductDetail = lazy(() => import('./pages/ProductDetail.jsx'));
++ const Search        = lazy(() => import('./pages/Search.jsx'));
+
+- <Routes>...</Routes>
++ <Suspense fallback={<p>Loading…</p>}>
++   <Routes>...</Routes>
++ </Suspense>
+```
+
+`React.lazy` + dynamic `import()` tells Vite to emit each page as a separate chunk. `Suspense` shows a fallback while the chunk is being fetched on first navigation.
+
+### Impact
+
+| Chunk | Size (gzip) | Loaded when |
+|-------|-------------|-------------|
+| `index.js` (React + router) | 54.6KB | Always |
+| `Home.js` | 0.45KB | `/` |
+| `ProductList.js` | 0.71KB | `/products` |
+| `ProductDetail.js` | 0.79KB | `/products/:id` |
+| `Search.js` | 0.47KB | `/search` |
+
+- **Initial load (homepage):** downloads only `index.js` (54.6KB gzip) — page chunks load on demand
+- **Subsequent navigation:** chunks are cached by the browser — near-instant
+
+### Trade-offs
+- First navigation to each page incurs a small extra network round-trip to fetch its chunk. Given each page chunk is under 1KB gzip, this is imperceptible.
+- `Suspense` fallback shows "Loading…" briefly on the first visit to each page.
 
 ---
 

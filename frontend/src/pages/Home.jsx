@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import _ from 'lodash';
 import { api } from '../api';
 import ProductCard from '../components/ProductCard.jsx';
 
@@ -18,7 +17,7 @@ export default function Home() {
     <div>
       <h2 className="section-title">{title}</h2>
       <div className="grid">
-        {_.map(items, (p) => <ProductCard key={p.id} product={p} />)}
+        {items.map((p) => <ProductCard key={p.id} product={p} />)}
       </div>
     </div>
   );
