@@ -345,7 +345,58 @@ All API responses and static files were sent as raw uncompressed bytes. A single
 
 ---
 
-## Optimization 9: [coming next — HTTP Cache-Control headers]
+## Optimization 9: Add HTTP Cache-Control headers for images and API responses
+
+### Problem
+Two intentional omissions in `server.js`:
+1. Images served with `etag: false, lastModified: false` — browsers re-downloaded every product image on every page visit
+2. No `Cache-Control` on any API response — browsers and proxies treated everything as uncacheable and re-fetched on every navigation
+
+### Root Cause
+The comments in the original code explicitly said "No Cache-Control / ETag on purpose." Both `etag` and `lastModified` were disabled on the static image server, and no cache headers were set on any route.
+
+### Solution
+
+```diff
++ function cacheFor(seconds) {
++   return (req, res, next) => {
++     if (req.method === 'GET') {
++       res.set('Cache-Control', `public, max-age=${seconds}, stale-while-revalidate=${seconds * 5}`);
++     }
++     next();
++   };
++ }
+
+- app.use('/images', express.static(..., { etag: false, lastModified: false }));
++ app.use('/images', express.static(..., { maxAge: '1y', immutable: true }));
+
+- app.use('/home', homeRouter);
+- app.use('/products', productsRouter);
+- app.use('/search', searchRouter);
++ app.use('/home',     cacheFor(60),  homeRouter);
++ app.use('/products', cacheFor(300), productsRouter);
++ app.use('/search',   cacheFor(30),  searchRouter);
+```
+
+### TTL Rationale
+
+| Route | TTL | Reason |
+|-------|-----|--------|
+| `/images` | 1 year + immutable | Static files that never change at runtime |
+| `/home` | 60s | Featured/new arrivals change infrequently |
+| `/products` | 300s (5min) | Product catalog is stable; 5min stale is acceptable |
+| `/search` | 30s | Search results are more dynamic; short TTL to stay fresh |
+
+`stale-while-revalidate` means the browser serves the stale cache instantly while fetching a fresh copy in the background — users never wait.
+
+### Impact
+- **Images:** Second visit to any product page loads images from browser cache (0 network requests for images)
+- **API:** Repeat navigation to `/products` or `/home` within the TTL window: instant — served from cache with no round trip to the server
+- **Metric improved:** Repeat-visit LCP, TTFB, and total transfer size
+
+### Trade-offs
+- PATCH responses (`/products/:id`) are excluded via `req.method === 'GET'` guard — mutations are never cached.
+- Product updates won't be visible to users until their cache TTL expires (up to 5min). Acceptable for a catalog app; would need cache invalidation (Redis + ETags) for stricter freshness requirements.
 
 ---
 

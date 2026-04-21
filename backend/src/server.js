@@ -23,15 +23,25 @@ app.use((req, res, next) => {
 
 app.use(signing);
 
-// No compression middleware on purpose.
-// No Cache-Control / ETag on purpose.
+// Cache-Control middleware — applied per-router with appropriate TTLs.
+function cacheFor(seconds) {
+  return (req, res, next) => {
+    if (req.method === 'GET') {
+      res.set('Cache-Control', `public, max-age=${seconds}, stale-while-revalidate=${seconds * 5}`);
+    }
+    next();
+  };
+}
 
-// Serve raw full-size product images from disk.
-app.use('/images', express.static(path.join(__dirname, 'images'), { etag: false, lastModified: false }));
+// Images are static and never change — cache for 1 year.
+app.use('/images', express.static(path.join(__dirname, 'images'), {
+  maxAge: '1y',
+  immutable: true,
+}));
 
-app.use('/home', homeRouter);
-app.use('/products', productsRouter);
-app.use('/search', searchRouter);
+app.use('/home',     cacheFor(60),  homeRouter);      // homepage sections: 60s fresh
+app.use('/products', cacheFor(300), productsRouter);   // product data: 5min fresh
+app.use('/search',   cacheFor(30),  searchRouter);     // search results: 30s fresh
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
