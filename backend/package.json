@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
+    "compression": "^1.8.1",
     "express": "^4.21.0",
     "lodash": "^4.17.21",
     "moment": "^2.30.1",

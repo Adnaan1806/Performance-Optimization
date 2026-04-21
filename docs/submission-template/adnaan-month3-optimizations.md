@@ -314,7 +314,34 @@ The route comment even said "No cache, no CDN." The seeder generates only 20 uni
 
 ---
 
-## Optimization 8: [coming next — Add gzip compression]
+## Optimization 8: Add gzip compression middleware
+
+### Problem
+All API responses and static files were sent as raw uncompressed bytes. A single `/products` page response was ~40KB of JSON; the `/products` full list (before pagination) was ~2MB. No `Content-Encoding` header was set — the server comment even said "No compression middleware on purpose."
+
+### Root Cause
+`server.js` had no compression middleware registered. Express does not compress responses by default.
+
+### Solution
+
+```diff
++ const compression = require('compression');
+
+  const app = express();
++ app.use(compression());
+  app.use(express.json());
+```
+
+`compression` is the standard Express middleware that negotiates gzip/deflate with the client via `Accept-Encoding`, compresses the response body, and sets `Content-Encoding: gzip`. It skips compression for already-compressed formats (images, etc.) automatically.
+
+### Impact
+- **Metric improved:** Transfer size and TTFB on all JSON API responses
+- **Typical reduction:** 60–80% on JSON payloads (text compresses extremely well)
+- **Example:** A 40KB paginated `/products` response → ~8KB over the wire
+
+### Trade-offs
+- Small CPU cost per response for compression. Negligible compared to what we saved with the bcrypt fix.
+- Already-compressed assets (JPEGs) are skipped automatically — no double-compression waste.
 
 ---
 

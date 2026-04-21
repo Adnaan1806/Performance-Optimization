@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 const path = require('path');
 const signing = require('./middleware/signing');
 
@@ -8,6 +9,7 @@ const searchRouter = require('./routes/search');
 
 const app = express();
 
+app.use(compression());
 app.use(express.json());
 
 // Permissive CORS for dev.
