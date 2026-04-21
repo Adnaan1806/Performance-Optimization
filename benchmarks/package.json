@@ -1,0 +1,13 @@
+{
+  "name": "month3-benchmarks",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "api": "node autocannon-api.js",
+    "lighthouse": "./lighthouse.sh"
+  },
+  "dependencies": {
+    "autocannon": "^7.15.0"
+  }
+}

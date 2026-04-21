@@ -1,0 +1,8 @@
+{
+  "siteName": "Slow Shop",
+  "currency": "LKR",
+  "featuredLimit": 8,
+  "newArrivalsLimit": 8,
+  "topRatedLimit": 8,
+  "listingDefault": "all"
+}
