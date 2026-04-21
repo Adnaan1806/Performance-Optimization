@@ -7,6 +7,20 @@ const { loadConfig } = require('../config');
 
 const router = express.Router();
 
+// In-process thumbnail cache: image_path → base64 data URI.
+// Only 20 unique source images exist — cache fills fast and stays small.
+const thumbnailCache = new Map();
+
+async function getThumbnail(imagePath) {
+  if (thumbnailCache.has(imagePath)) return thumbnailCache.get(imagePath);
+  const imageAbs = path.join(__dirname, '..', 'images', imagePath);
+  if (!fs.existsSync(imageAbs)) return null;
+  const buf = await sharp(imageAbs).resize(400, 400, { fit: 'cover' }).jpeg({ quality: 80 }).toBuffer();
+  const dataUri = `data:image/jpeg;base64,${buf.toString('base64')}`;
+  thumbnailCache.set(imagePath, dataUri);
+  return dataUri;
+}
+
 // GET /products?page=1&limit=20 — paginated product list.
 router.get('/', async (req, res, next) => {
   try {
@@ -89,13 +103,7 @@ router.get('/:id', async (req, res, next) => {
       [product.id]
     );
 
-    // Regenerate a thumbnail on every single request. No cache, no CDN.
-    const imageAbs = path.join(__dirname, '..', 'images', product.image_path);
-    let thumbnailBase64 = null;
-    if (fs.existsSync(imageAbs)) {
-      const buf = await sharp(imageAbs).resize(400, 400, { fit: 'cover' }).jpeg({ quality: 80 }).toBuffer();
-      thumbnailBase64 = `data:image/jpeg;base64,${buf.toString('base64')}`;
-    }
+    const thumbnailBase64 = await getThumbnail(product.image_path);
 
     res.json({
       ...product,

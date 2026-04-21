@@ -269,7 +269,48 @@ Node caches the module after first `require()`, so the file is read exactly once
 
 ---
 
-## Optimization 7: [coming next — Cache thumbnails]
+## Optimization 7: Cache generated thumbnails in memory
+
+### Problem
+Every `GET /products/:id` ran `sharp().resize(400,400).jpeg()` on a 2000×2000 source image — 200–500ms of CPU work per request, every time, with no caching.
+
+### Root Cause
+The route comment even said "No cache, no CDN." The seeder generates only 20 unique source images shared across all 5,000 products, so the same resize was being repeated indefinitely for identical inputs.
+
+### Solution
+
+```diff
++ const thumbnailCache = new Map();
++
++ async function getThumbnail(imagePath) {
++   if (thumbnailCache.has(imagePath)) return thumbnailCache.get(imagePath);
++   const imageAbs = path.join(__dirname, '..', 'images', imagePath);
++   if (!fs.existsSync(imageAbs)) return null;
++   const buf = await sharp(imageAbs).resize(400, 400, { fit: 'cover' }).jpeg({ quality: 80 }).toBuffer();
++   const dataUri = `data:image/jpeg;base64,${buf.toString('base64')}`;
++   thumbnailCache.set(imagePath, dataUri);
++   return dataUri;
++ }
+
+- // Regenerate a thumbnail on every single request. No cache, no CDN.
+- const imageAbs = path.join(__dirname, '..', 'images', product.image_path);
+- let thumbnailBase64 = null;
+- if (fs.existsSync(imageAbs)) {
+-   const buf = await sharp(imageAbs).resize(400, 400, { fit: 'cover' }).jpeg({ quality: 80 }).toBuffer();
+-   thumbnailBase64 = `data:image/jpeg;base64,${buf.toString('base64')}`;
+- }
++ const thumbnailBase64 = await getThumbnail(product.image_path);
+```
+
+### Impact
+- **Metric improved:** `GET /products/:id` response time
+- **First request per image:** unchanged (~200–500ms for sharp to process)
+- **All subsequent requests:** 0ms — returned directly from Map
+- **Cache fills after:** 20 unique product detail page views (one per source image)
+
+### Trade-offs
+- Cache lives in process memory — cleared on server restart. Acceptable since re-warming takes at most 20 requests.
+- Memory cost: 20 images × ~40KB base64 each ≈ ~800KB total. Negligible.
 
 ---
 
