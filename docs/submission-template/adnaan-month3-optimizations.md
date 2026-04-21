@@ -400,7 +400,53 @@ The comments in the original code explicitly said "No Cache-Control / ETag on pu
 
 ---
 
-## Optimization 10: [coming next — Redis caching for hot API paths]
+## Optimization 10: Wire up Redis caching for hot API paths
+
+### Problem
+Redis was provisioned in Docker Compose (`REDIS_URL` env var set, container running) but never connected to or used. Every request hit PostgreSQL regardless of how recently the same query had run.
+
+### Root Cause
+No Redis client module existed in the codebase. The challenge README explicitly noted "Redis service running (intentionally unused — wire it up)."
+
+### Solution
+
+**`src/cache.js`** — shared cache-aside helper:
+```javascript
+const redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
+
+async function withCache(key, ttl, fetchFn) {
+  try {
+    const cached = await redis.get(key);
+    if (cached !== null) return JSON.parse(cached);
+  } catch { /* Redis unavailable — fall through */ }
+
+  const value = await fetchFn();
+
+  try { await redis.setex(key, ttl, JSON.stringify(value)); } catch {}
+
+  return value;
+}
+```
+
+Applied to the three hottest read routes:
+
+| Route | Cache Key | TTL |
+|-------|-----------|-----|
+| `GET /home` | `home` | 60s |
+| `GET /products?page=N&limit=M` | `products:page:N:limit:M` | 300s |
+| `GET /search?q=Q` | `search:q` | 30s |
+
+TTLs match the HTTP `Cache-Control` headers from Fix #9 — both caching layers stay in sync.
+
+### Impact
+- **Cache hit:** DB queries skipped entirely — response served from Redis in ~1ms
+- **Cache miss (first request):** Same as before — DB query runs, result stored
+- **Metric improved:** TTFB and DB load on repeat requests to all three routes
+
+### Trade-offs
+- Redis errors are caught silently — if Redis goes down the app keeps working, just without caching.
+- `maxRetriesPerRequest: 1` prevents a slow/unavailable Redis from blocking requests.
+- Search cache is keyed by query string — a unique search term per user won't benefit until the same query repeats.
 
 ---
 
@@ -431,7 +477,11 @@ CREATE INDEX idx_products_description_trgm ON products USING GIN (description gi
 
 ## Caching Implementation Summary
 
-- Cache store: Redis (provisioned, not yet wired)
-- Keys & TTLs: *(to be filled)*
-- Invalidation strategy: *(to be filled)*
-- Hit/miss ratio observed: *(to be measured)*
+- **Cache store:** Redis 7 (ioredis client)
+- **Keys & TTLs:**
+  - `home` → 60s
+  - `products:page:N:limit:M` → 300s
+  - `search:<query>` → 30s
+- **Invalidation strategy:** TTL-based expiry. On PATCH `/products/:id` the relevant page cache would need to be invalidated — not yet implemented (acceptable for a read-heavy catalog).
+- **Resilience:** Redis errors caught silently — app degrades gracefully to DB-only mode
+- **Hit/miss ratio observed:** All 3 keys confirmed stored after first request; subsequent requests served from cache
