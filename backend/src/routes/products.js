@@ -7,36 +7,41 @@ const { loadConfig } = require('../config');
 
 const router = express.Router();
 
-// GET /products — list all products
-// Pulls all rows, then for EACH product runs two extra queries (category + avg rating).
+// GET /products — list all products in one JOIN query (no N+1).
 router.get('/', async (req, res, next) => {
   try {
     const db = await getClient();
     const config = loadConfig();
 
-    const { rows: products } = await db.query(
-      'SELECT id, name, description, price, stock, category_id, image_path, featured, created_at FROM products ORDER BY created_at DESC'
+    const { rows } = await db.query(
+      `SELECT p.id, p.name, p.description, p.price, p.stock, p.category_id,
+              p.image_path, p.featured, p.created_at,
+              c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug,
+              COALESCE(AVG(r.rating), 0)::float AS avg_rating,
+              COUNT(r.id)::int AS review_count
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN reviews r ON r.product_id = p.id
+       GROUP BY p.id, c.id, c.name, c.slug
+       ORDER BY p.created_at DESC`
     );
 
-    const enriched = [];
-    for (const p of products) {
-      const { rows: catRows } = await db.query(
-        'SELECT id, name, slug FROM categories WHERE id = $1',
-        [p.category_id]
-      );
-      const { rows: ratingRows } = await db.query(
-        'SELECT COALESCE(AVG(rating), 0)::float AS avg_rating, COUNT(*)::int AS review_count FROM reviews WHERE product_id = $1',
-        [p.id]
-      );
-      enriched.push({
-        ...p,
-        category: catRows[0] || null,
-        avg_rating: ratingRows[0].avg_rating,
-        review_count: ratingRows[0].review_count,
-      });
-    }
+    const products = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      price: row.price,
+      stock: row.stock,
+      category_id: row.category_id,
+      image_path: row.image_path,
+      featured: row.featured,
+      created_at: row.created_at,
+      category: row.cat_id ? { id: row.cat_id, name: row.cat_name, slug: row.cat_slug } : null,
+      avg_rating: row.avg_rating,
+      review_count: row.review_count,
+    }));
 
-    res.json({ site: config.siteName, count: enriched.length, products: enriched });
+    res.json({ site: config.siteName, count: products.length, products });
   } catch (err) {
     next(err);
   }

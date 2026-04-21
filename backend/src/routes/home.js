@@ -4,62 +4,75 @@ const { loadConfig } = require('../config');
 
 const router = express.Router();
 
-// Helper that repeats the N+1 pattern for any slice of products.
-async function enrich(db, products) {
-  const out = [];
-  for (const p of products) {
-    const { rows: catRows } = await db.query(
-      'SELECT id, name, slug FROM categories WHERE id = $1',
-      [p.category_id]
-    );
-    const { rows: ratingRows } = await db.query(
-      'SELECT COALESCE(AVG(rating), 0)::float AS avg_rating, COUNT(*)::int AS review_count FROM reviews WHERE product_id = $1',
-      [p.id]
-    );
-    out.push({
-      ...p,
-      category: catRows[0] || null,
-      avg_rating: ratingRows[0].avg_rating,
-      review_count: ratingRows[0].review_count,
-    });
-  }
-  return out;
+// Map a flat JOIN row into the nested shape the frontend expects.
+function shape(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    price: row.price,
+    category_id: row.category_id,
+    image_path: row.image_path,
+    category: row.cat_id ? { id: row.cat_id, name: row.cat_name, slug: row.cat_slug } : null,
+    avg_rating: row.avg_rating,
+    review_count: row.review_count,
+  };
 }
 
-// GET /home — three sections, each its own N+1.
+// GET /home — three sections, each resolved in a single JOIN query (no N+1).
 router.get('/', async (req, res, next) => {
   try {
     const db = await getClient();
     const config = loadConfig();
 
     const { rows: featured } = await db.query(
-      'SELECT id, name, price, category_id, image_path FROM products WHERE featured = TRUE ORDER BY created_at DESC LIMIT $1',
+      `SELECT p.id, p.name, p.price, p.category_id, p.image_path,
+              c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug,
+              COALESCE(AVG(r.rating), 0)::float AS avg_rating,
+              COUNT(r.id)::int AS review_count
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN reviews r ON r.product_id = p.id
+       WHERE p.featured = TRUE
+       GROUP BY p.id, c.id, c.name, c.slug
+       ORDER BY p.created_at DESC
+       LIMIT $1`,
       [config.featuredLimit]
     );
+
     const { rows: newArrivals } = await db.query(
-      'SELECT id, name, price, category_id, image_path FROM products ORDER BY created_at DESC LIMIT $1',
+      `SELECT p.id, p.name, p.price, p.category_id, p.image_path,
+              c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug,
+              COALESCE(AVG(r.rating), 0)::float AS avg_rating,
+              COUNT(r.id)::int AS review_count
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN reviews r ON r.product_id = p.id
+       GROUP BY p.id, c.id, c.name, c.slug
+       ORDER BY p.created_at DESC
+       LIMIT $1`,
       [config.newArrivalsLimit]
     );
-    // Top-rated: subquery over reviews (no index on reviews.product_id → seq scan).
+
     const { rows: topRated } = await db.query(
-      `SELECT p.id, p.name, p.price, p.category_id, p.image_path
+      `SELECT p.id, p.name, p.price, p.category_id, p.image_path,
+              c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug,
+              AVG(r.rating)::float AS avg_rating,
+              COUNT(r.id)::int AS review_count
        FROM products p
-       JOIN (
-         SELECT product_id, AVG(rating) AS avg_rating, COUNT(*) AS n
-         FROM reviews
-         GROUP BY product_id
-         HAVING COUNT(*) >= 3
-       ) r ON r.product_id = p.id
-       ORDER BY r.avg_rating DESC, r.n DESC
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN reviews r ON r.product_id = p.id
+       GROUP BY p.id, c.id, c.name, c.slug
+       HAVING COUNT(r.id) >= 3
+       ORDER BY avg_rating DESC, review_count DESC
        LIMIT $1`,
       [config.topRatedLimit]
     );
 
     res.json({
       site: config.siteName,
-      featured: await enrich(db, featured),
-      newArrivals: await enrich(db, newArrivals),
-      topRated: await enrich(db, topRated),
+      featured: featured.map(shape),
+      newArrivals: newArrivals.map(shape),
+      topRated: topRated.map(shape),
     });
   } catch (err) {
     next(err);
