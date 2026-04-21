@@ -8,7 +8,7 @@ async function json(path) {
 
 export const api = {
   home: () => json('/home'),
-  products: () => json('/products'),
+  products: (page = 1, limit = 20) => json(`/products?page=${page}&limit=${limit}`),
   product: (id) => json(`/products/${id}`),
   search: (q) => json(`/search?q=${encodeURIComponent(q)}`),
   imageUrl: (path) => `${BASE}/images/${path}`,

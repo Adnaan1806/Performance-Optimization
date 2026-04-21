@@ -7,24 +7,35 @@ const { loadConfig } = require('../config');
 
 const router = express.Router();
 
-// GET /products — list all products in one JOIN query (no N+1).
+// GET /products?page=1&limit=20 — paginated product list.
 router.get('/', async (req, res, next) => {
   try {
     const db = await getClient();
     const config = loadConfig();
 
-    const { rows } = await db.query(
-      `SELECT p.id, p.name, p.description, p.price, p.stock, p.category_id,
-              p.image_path, p.featured, p.created_at,
-              c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug,
-              COALESCE(AVG(r.rating), 0)::float AS avg_rating,
-              COUNT(r.id)::int AS review_count
-       FROM products p
-       LEFT JOIN categories c ON c.id = p.category_id
-       LEFT JOIN reviews r ON r.product_id = p.id
-       GROUP BY p.id, c.id, c.name, c.slug
-       ORDER BY p.created_at DESC`
-    );
+    const limit  = Math.min(parseInt(req.query.limit, 10)  || 20, 100);
+    const page   = Math.max(parseInt(req.query.page,  10)  || 1,  1);
+    const offset = (page - 1) * limit;
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT p.id, p.name, p.description, p.price, p.stock, p.category_id,
+                p.image_path, p.featured, p.created_at,
+                c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug,
+                COALESCE(AVG(r.rating), 0)::float AS avg_rating,
+                COUNT(r.id)::int AS review_count
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN reviews r ON r.product_id = p.id
+         GROUP BY p.id, c.id, c.name, c.slug
+         ORDER BY p.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      db.query('SELECT COUNT(*)::int AS total FROM products'),
+    ]);
+
+    const total = countRows[0].total;
 
     const products = rows.map((row) => ({
       id: row.id,
@@ -41,7 +52,15 @@ router.get('/', async (req, res, next) => {
       review_count: row.review_count,
     }));
 
-    res.json({ site: config.siteName, count: products.length, products });
+    res.json({
+      site: config.siteName,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      count: products.length,
+      products,
+    });
   } catch (err) {
     next(err);
   }

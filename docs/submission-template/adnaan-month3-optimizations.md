@@ -196,7 +196,40 @@ CREATE INDEX IF NOT EXISTS idx_products_description_trgm ON products USING GIN (
 
 ---
 
-## Optimization 5: [coming next — Pagination on GET /products]
+## Optimization 5: Add pagination to GET /products
+
+### Problem
+`GET /products` returned all 5,000 products in a single response — even after the N+1 fix. This meant:
+- DB returns 5,000 rows every request
+- Node serializes a ~2MB JSON payload
+- Browser renders 5,000 `<ProductCard>` components at once
+- Client-side `_.sortBy` + `.filter` iterates 5,000 items on every keystroke
+
+### Root Cause
+No `LIMIT`/`OFFSET` on the query and no pagination concept in the frontend. The API was designed to dump everything and let the client deal with it.
+
+### Solution
+
+**Backend** — `?page=N&limit=20`, capped at 100 per page. Runs the paginated query and a count query in parallel with `Promise.all`:
+
+```diff
+- 'SELECT ... FROM products ... ORDER BY created_at DESC'
++ 'SELECT ... FROM products ... ORDER BY created_at DESC LIMIT $1 OFFSET $2'
+
++ Response now includes: { total, page, limit, totalPages, count, products }
+```
+
+**Frontend** — `ProductList.jsx` gains page state and Prev/Next controls. Filter now applies within the current page (server-side search via `/search` handles cross-page search).
+
+### Impact
+- **Metric improved:** `GET /products` response time and payload size
+- **Payload:** ~2MB → ~40KB per page (20 products × ~2KB each)
+- **Render:** 5,000 DOM nodes → 20 per page
+- **DB work:** Returns 20 rows instead of 5,000
+
+### Trade-offs
+- Client-side filter now only searches the current page. Users needing full search should use the `/search` page (which queries the DB across all products).
+- `Promise.all` for data + count adds one extra query per request, but both are fast with indexes in place.
 
 ---
 
