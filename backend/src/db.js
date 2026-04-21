@@ -1,17 +1,16 @@
-const { Client } = require('pg');
+const { Pool } = require('pg');
 
-const client = new Client({
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://shop:shop@localhost:5432/shop',
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
 
-let connected = false;
-
-async function getClient() {
-  if (!connected) {
-    await client.connect();
-    connected = true;
-  }
-  return client;
+// Returns the pool directly — pool.query() checks out a connection,
+// runs the query, and returns it automatically.
+function getClient() {
+  return pool;
 }
 
 module.exports = { getClient };

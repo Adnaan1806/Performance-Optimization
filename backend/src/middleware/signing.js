@@ -1,10 +1,10 @@
-const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 
-// Pretends to sign every request with a rotating token.
-// Intentionally CPU-expensive (cost=12 is heavy for a hot path).
+const SECRET = process.env.SIGNING_SECRET || 'dev-secret';
+
 module.exports = function signing(req, res, next) {
   const payload = `${req.method}:${req.path}:${Date.now()}`;
-  const signature = bcrypt.hashSync(payload, 12);
+  const signature = crypto.createHmac('sha256', SECRET).update(payload).digest('hex');
   res.setHeader('X-Request-Signature', signature.slice(0, 24));
   next();
 };
