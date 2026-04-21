@@ -233,7 +233,39 @@ No `LIMIT`/`OFFSET` on the query and no pagination concept in the frontend. The 
 
 ---
 
-## Optimization 6: [coming next — Cache loadConfig() in memory]
+## Optimization 6: Cache config in memory instead of reading from disk per request
+
+### Problem
+`loadConfig()` was called at the top of every request handler in `home.js` and `products.js`. Each call did a synchronous `fs.readFileSync` + `JSON.parse` — blocking the event loop on every single request.
+
+### Root Cause
+`config.js` was intentionally written to re-read from disk on every call. The comment even says "intentionally not cached." The config file (`config.json`) never changes at runtime, so there is no reason to re-read it.
+
+### Solution
+
+```diff
+- // Read config from disk on every call — intentionally not cached.
+- function loadConfig() {
+-   const raw = fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8');
+-   return JSON.parse(raw);
+- }
+
++ // Read once at module load time — config does not change at runtime.
++ const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
++
++ function loadConfig() {
++   return config;
++ }
+```
+
+Node caches the module after first `require()`, so the file is read exactly once when the server starts, then every subsequent `loadConfig()` call returns the already-parsed object instantly.
+
+### Impact
+- **Metric improved:** Latency on all routes that call `loadConfig()` (`/home`, `/products`)
+- **Improvement:** Eliminates a synchronous disk read + JSON parse on every request — effectively ~0ms overhead instead of ~1–2ms of blocking I/O
+
+### Trade-offs
+- Config changes require a server restart to take effect. Acceptable for static app config; not suitable for feature flags that need live reloads.
 
 ---
 
