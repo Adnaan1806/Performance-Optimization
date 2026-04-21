@@ -148,7 +148,51 @@ Same pattern applied to `newArrivals`, `topRated` (home.js), `GET /products` lis
 
 ---
 
-## Optimization 4: [coming next — Add DB indexes]
+## Optimization 4: Add missing database indexes
+
+### Problem
+The schema had primary keys only. Every query filtering, joining, or sorting hit a full sequential scan — Postgres had to read every row in the table to find matches.
+
+### Root Cause
+`001_schema.sql` explicitly left out all non-PK indexes as part of the challenge. The impact:
+- `reviews.product_id` — 50,000-row seq scan on every rating JOIN/GROUP BY
+- `products.featured` — 5,000-row seq scan to find ~handful of featured rows
+- `products.created_at` — full sort of 5,000 rows on every list query
+- `products.category_id` — 5,000-row scan on every category JOIN
+- `ILIKE '%q%'` — B-tree indexes are useless for leading-wildcard search; full scan every search
+
+### Solution
+
+New migration `002_indexes.sql`:
+
+```sql
+-- reviews.product_id: most-hit column in the entire workload
+CREATE INDEX IF NOT EXISTS idx_reviews_product_id ON reviews(product_id);
+
+-- products.featured: partial index — only indexes the TRUE rows
+CREATE INDEX IF NOT EXISTS idx_products_featured ON products(featured) WHERE featured = TRUE;
+
+-- products.created_at: covers ORDER BY created_at DESC on every list query
+CREATE INDEX IF NOT EXISTS idx_products_created_at ON products(created_at DESC);
+
+-- products.category_id: covers JOIN categories ON c.id = p.category_id
+CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
+
+-- Trigram GIN indexes: enable fast ILIKE '%q%' search on name + description
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_products_name_trgm        ON products USING GIN (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_products_description_trgm ON products USING GIN (description gin_trgm_ops);
+```
+
+### Impact
+- **reviews.product_id:** Rating aggregation goes from full 50k-row scan to direct index lookup — biggest DB-level win alongside Fix #3
+- **featured partial index:** Home featured section scan: 5,000 rows → only indexed TRUE rows
+- **created_at index:** Eliminates full sort on every list/home query
+- **Trigram indexes:** Search query goes from full table scan to GIN index lookup
+
+### Trade-offs
+- Indexes consume disk space and add a small overhead to INSERT/UPDATE on those columns. Acceptable cost for a read-heavy product catalog.
+- `pg_trgm` GIN indexes are large (trigrams expand the index size) but necessary for ILIKE support. A full-text `tsvector` index would be even faster for word-level search but requires query changes.
 
 ---
 
@@ -188,7 +232,14 @@ Same pattern applied to `newArrivals`, `topRated` (home.js), `GET /products` lis
 
 ### Indexes Added
 
-*(to be filled)*
+```sql
+CREATE INDEX idx_reviews_product_id        ON reviews(product_id);
+CREATE INDEX idx_products_featured         ON products(featured) WHERE featured = TRUE;
+CREATE INDEX idx_products_created_at       ON products(created_at DESC);
+CREATE INDEX idx_products_category_id      ON products(category_id);
+CREATE INDEX idx_products_name_trgm        ON products USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_products_description_trgm ON products USING GIN (description gin_trgm_ops);
+```
 
 ### Query Rewrites
 
